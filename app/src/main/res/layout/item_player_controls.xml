@@ -53,6 +53,15 @@
                 tools:text="@tools:sample/lorem/random" />
         </LinearLayout>
 
+        <!-- Hidden until PlayerFragment sees a Cast device on the network. -->
+        <androidx.mediarouter.app.MediaRouteButton
+            android:id="@+id/trackCast"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="@drawable/ripple_60dp"
+            android:visibility="gone"
+            app:mediaRouteButtonTint="@color/button_player" />
+
         <com.google.android.material.checkbox.MaterialCheckBox
             android:id="@+id/trackHeart"
             android:layout_width="64dp"

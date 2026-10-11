@@ -23,6 +23,8 @@ import androidx.core.net.toUri
 import androidx.core.view.doOnLayout
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -40,6 +42,9 @@ import androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
 import androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_OUTLINE
+import com.google.android.gms.cast.framework.CastButtonFactory
+import com.google.android.gms.cast.framework.CastState
+import com.google.android.gms.cast.framework.CastStateListener
 import com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_COLLAPSED
 import com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED
 import com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_HIDDEN
@@ -55,6 +60,7 @@ import dev.brahmkshatriya.echo.playback.MediaItemUtils.isLiked
 import dev.brahmkshatriya.echo.playback.MediaItemUtils.isLoaded
 import dev.brahmkshatriya.echo.playback.MediaItemUtils.showBackground
 import dev.brahmkshatriya.echo.playback.MediaItemUtils.track
+import dev.brahmkshatriya.echo.playback.cast.CastSwitchPlayer
 import dev.brahmkshatriya.echo.ui.common.FragmentUtils.openFragment
 import dev.brahmkshatriya.echo.ui.common.UiViewModel
 import dev.brahmkshatriya.echo.ui.common.UiViewModel.Companion.applyHorizontalInsets
@@ -113,6 +119,7 @@ class PlayerFragment : Fragment() {
         configureCollapsing(binding)
         configureColors()
         configurePlayerControls()
+        configureCastButton()
         configureBackgroundPlayerView()
     }
 
@@ -485,6 +492,19 @@ class PlayerFragment : Fragment() {
     }
 
     private val likeListener = CheckBoxListener { viewModel.likeCurrent(it) }
+
+    private fun configureCastButton() {
+        val button = binding!!.playerControls.trackCast
+        val castContext = CastSwitchPlayer.castContext(requireContext()) ?: return
+        CastButtonFactory.setUpMediaRouteButton(requireContext(), button)
+        val listener = CastStateListener { button.isVisible = it != CastState.NO_DEVICES_AVAILABLE }
+        listener.onCastStateChanged(castContext.castState)
+        castContext.addCastStateListener(listener)
+        viewLifecycleOwner.lifecycle.addObserver(object : DefaultLifecycleObserver {
+            override fun onDestroy(owner: LifecycleOwner) =
+                castContext.removeCastStateListener(listener)
+        })
+    }
 
     private fun configureColors() {
         observe(viewModel.playerState.current) { adapter.onCurrentUpdated() }

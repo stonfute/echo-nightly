@@ -3,19 +3,16 @@ package dev.brahmkshatriya.echo.playback
 import androidx.annotation.OptIn
 import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.ShuffleOrder
 
+// Shuffles by reordering the queue itself, so the player underneath has to play items in the
+// order it gets them. ExoPlayer is set up that way in PlayerService.createExoplayer.
 @Suppress("unused")
 @OptIn(UnstableApi::class)
 class ShufflePlayer(
-    private val player: ExoPlayer,
+    private val player: Player,
 ) : ForwardingPlayer(player) {
-
-    init {
-        player.setShuffleOrder(ShuffleOrder.UnshuffledShuffleOrder(0))
-    }
 
     private fun getQueue() = (0 until mediaItemCount).map { player.getMediaItemAt(it) }
 

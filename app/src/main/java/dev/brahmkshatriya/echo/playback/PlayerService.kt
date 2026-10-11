@@ -19,6 +19,7 @@ import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.ShuffleOrder
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaController
 import androidx.media3.session.MediaLibraryService
@@ -33,6 +34,7 @@ import dev.brahmkshatriya.echo.download.Downloader
 import dev.brahmkshatriya.echo.extensions.ExtensionLoader
 import dev.brahmkshatriya.echo.extensions.ExtensionUtils.extensionPrefId
 import dev.brahmkshatriya.echo.extensions.ExtensionUtils.prefs
+import dev.brahmkshatriya.echo.playback.cast.CastSwitchPlayer
 import dev.brahmkshatriya.echo.playback.listener.AudioFocusListener
 import dev.brahmkshatriya.echo.playback.listener.EffectsListener
 import dev.brahmkshatriya.echo.playback.listener.MediaSessionServiceListener
@@ -86,7 +88,11 @@ class PlayerService : MediaLibraryService() {
         super.onCreate()
         setListener(MediaSessionServiceListener(this, getPendingIntent(this)))
 
-        val player = ShufflePlayer(exoPlayer)
+        // Null without Google Play services, then we just use ExoPlayer like before.
+        val castPlayer = CastSwitchPlayer.create(
+            this, exoPlayer, app, scope, state, extensions, downloadFlow, mediaChangeFlow
+        )
+        val player = ShufflePlayer(castPlayer ?: exoPlayer)
         scope.launch(Dispatchers.Main) {
             mediaChangeFlow.collect { (o, n) -> player.onMediaItemChanged(o, n) }
         }
@@ -172,6 +178,8 @@ class PlayerService : MediaLibraryService() {
                     .setAudioOffloadPreferences(audioOffloadPreferences)
                     .build()
                 it.preloadConfiguration = ExoPlayer.PreloadConfiguration(C.TIME_UNSET)
+                // ShufflePlayer reorders the queue itself, ExoPlayer must not shuffle on top.
+                it.setShuffleOrder(ShuffleOrder.UnshuffledShuffleOrder(0))
                 it.skipSilenceEnabled = app.settings.getBoolean(SKIP_SILENCE, true)
             }
     }
