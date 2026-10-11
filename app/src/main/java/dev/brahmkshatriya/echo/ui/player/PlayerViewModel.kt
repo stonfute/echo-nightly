@@ -145,6 +145,10 @@ class PlayerViewModel(
         withBrowser { it.repeatMode = repeatMode }
     }
 
+    fun setRemoteVolume(volume: Int) {
+        withBrowser { it.setDeviceVolume(volume, 0) }
+    }
+
     suspend fun isLikeClient(extensionId: String): Boolean = withContext(Dispatchers.IO) {
         extensions.music.getExtension(extensionId)?.isClient<LikeClient>() ?: false
     }
@@ -300,6 +304,9 @@ class PlayerViewModel(
     val previousEnabled = MutableStateFlow(false)
     val repeatMode = MutableStateFlow(0)
     val shuffleMode = MutableStateFlow(false)
+
+    // (volume, max volume) of the Cast device, null when we're not casting.
+    val remoteVolume = MutableStateFlow<Pair<Int, Int>?>(null)
 
     val tracksFlow = MutableStateFlow<Tracks?>(null)
     val serverAndTracks = tracksFlow.combine(playerState.serverChanged) { tracks, _ -> tracks }

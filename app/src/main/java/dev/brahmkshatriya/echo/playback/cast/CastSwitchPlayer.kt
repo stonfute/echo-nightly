@@ -5,6 +5,7 @@ import android.net.wifi.WifiManager
 import android.os.Handler
 import android.os.PowerManager
 import android.os.SystemClock
+import android.util.Log
 import androidx.annotation.OptIn
 import androidx.core.net.toUri
 import androidx.media3.cast.CastPlayer
@@ -120,12 +121,16 @@ class CastSwitchPlayer private constructor(
 
     private var pending: Pending? = null
 
-    private sealed interface Op
-    private class Load(val entries: List<Entry>, val positionMs: Long, val autoplay: Boolean) : Op
-    private class Insert(val entries: List<Entry>) : Op
-    private class Remove(val entries: List<Entry>) : Op
-    private class Move(val entries: List<Entry>) : Op
-    private class Jump(val entry: Entry, val positionMs: Long) : Op
+    private sealed class Op {
+        // How many times the receiver has rejected this change.
+        var attempts = 0
+    }
+
+    private class Load(val entries: List<Entry>, val positionMs: Long, val autoplay: Boolean) : Op()
+    private class Insert(val entries: List<Entry>) : Op()
+    private class Remove(val entries: List<Entry>) : Op()
+    private class Move(val entries: List<Entry>) : Op()
+    private class Jump(val entry: Entry, val positionMs: Long) : Op()
 
     // Changes not sent to the receiver yet, in order. Most wait for the receiver to report the
     // item ids of the entries they refer to.
@@ -161,7 +166,12 @@ class CastSwitchPlayer private constructor(
     private val pendingTimeout = Runnable { invalidateIfRemote() }
 
     // If the receiver never reports the ids an operation waits for, start again from our queue.
-    private val watchdog = Runnable { resync() }
+    // A load can take a while, as the receiver waits for the extension to resolve the stream.
+    private val watchdog = object : Runnable {
+        override fun run() {
+            if (loadsInFlight > 0) handler.postDelayed(this, OP_TIMEOUT_MS) else resync()
+        }
+    }
     private var connectJob: Job? = null
 
     init {
@@ -487,7 +497,7 @@ class CastSwitchPlayer private constructor(
         if (queue.isEmpty()) return
         ops.clear()
         queue.forEach {
-            it.token = server.register(it.item)
+            it.token = server.reissue(it.token, it.item)
             it.itemId = MediaQueueItem.INVALID_ITEM_ID
             it.sent = false
         }
@@ -531,8 +541,15 @@ class CastSwitchPlayer private constructor(
         }
     }
 
+    // Reloads the receiver's queue from ours. This restarts the current track, so it is only the
+    // last resort when the receiver's queue can no longer be followed.
     private fun resync() {
         if (!isRemote || queue.isEmpty()) return
+        if (loadsInFlight == 0 && remoteClient?.mediaStatus?.mediaInfo == null) {
+            // Nothing is playing, the whole queue is sent on the next prepare or play.
+            ops.clear()
+            return
+        }
         val now = SystemClock.elapsedRealtime()
         if (now - lastResync < RESYNC_INTERVAL_MS) {
             handler.removeCallbacks(watchdog)
@@ -540,32 +557,55 @@ class CastSwitchPlayer private constructor(
             return
         }
         lastResync = now
+        Log.w(TAG, "Receiver queue out of sync, reloading it")
         load(currentMediaItemIndex, currentPosition, playWhenReady)
     }
 
-    private fun execute(client: RemoteMediaClient, op: Op): Boolean = when (op) {
-        is Load -> {
-            val queueData = MediaQueueData.Builder()
-                .setItems(op.entries.map { it.toQueueItem() })
-                .setStartIndex(0)
-                .setRepeatMode(castRepeatMode())
-                .build()
-            val request = MediaLoadRequestData.Builder()
-                .setQueueData(queueData)
-                .setAutoplay(op.autoplay)
-                .setCurrentTime(op.positionMs)
-                .build()
-            loadsInFlight++
-            client.load(request).setResultCallback {
-                loadsInFlight = (loadsInFlight - 1).coerceAtLeast(0)
-                if (!it.status.isSuccess) scope.launch {
-                    app.throwFlow.emit(Exception("Cast device could not load the queue"))
-                }
-                invalidateIfRemote()
-            }
-            op.entries.forEach { it.sent = true }
+    // The receiver rejects queue changes until it has loaded the queue they apply to.
+    private fun isReceiverReady(client: RemoteMediaClient) =
+        loadsInFlight == 0 && client.mediaStatus?.mediaInfo != null
+
+    private fun execute(client: RemoteMediaClient, op: Op): Boolean = when {
+        op is Load -> {
+            executeLoad(client, op)
             true
         }
+
+        !isReceiverReady(client) -> false
+        else -> executeChange(client, op)
+    }
+
+    private fun executeLoad(client: RemoteMediaClient, op: Load) {
+        val queueData = MediaQueueData.Builder()
+            .setItems(op.entries.map { it.toQueueItem() })
+            // The entries already begin at the track to play, see load().
+            .setStartIndex(0)
+            .setRepeatMode(castRepeatMode())
+            .build()
+        val request = MediaLoadRequestData.Builder()
+            .setQueueData(queueData)
+            .setAutoplay(op.autoplay)
+            .setCurrentTime(op.positionMs)
+            .build()
+        loadsInFlight++
+        client.load(request).setResultCallback {
+            loadsInFlight = (loadsInFlight - 1).coerceAtLeast(0)
+            if (!it.status.isSuccess) {
+                // Tell the user, they would otherwise just see a silent receiver.
+                Log.w(TAG, "Cast load failed: ${it.status}")
+                scope.launch {
+                    app.throwFlow.emit(Exception("Cast device could not load the queue"))
+                }
+            }
+            flushOps()
+            invalidateIfRemote()
+        }
+        // Marked sent right away, their ids show up later through reconcile().
+        op.entries.forEach { it.sent = true }
+    }
+
+    private fun executeChange(client: RemoteMediaClient, op: Op): Boolean = when (op) {
+        is Load -> throw IllegalArgumentException("Loads are executed by executeLoad")
 
         is Insert -> {
             val inserted = op.entries.toSet()
@@ -578,7 +618,8 @@ class CastSwitchPlayer private constructor(
                     val beforeId = before?.itemId ?: MediaQueueItem.INVALID_ITEM_ID
                     entries.chunked(MAX_ITEMS_PER_MESSAGE).forEach { chunk ->
                         val items = chunk.map { it.toQueueItem() }.toTypedArray()
-                        client.queueInsertItems(items, beforeId, null).resyncOnFailure()
+                        val retry = Insert(chunk).also { it.attempts = op.attempts }
+                        client.queueInsertItems(items, beforeId, null).retryOnFailure(retry)
                     }
                     entries.forEach { it.sent = true }
                     true
@@ -595,7 +636,7 @@ class CastSwitchPlayer private constructor(
                 entries.any { !it.hasId } -> false
                 else -> {
                     val ids = entries.map { it.itemId }.toIntArray()
-                    client.queueRemoveItems(ids, null).resyncOnFailure()
+                    client.queueRemoveItems(ids, null).retryOnFailure(op)
                     entries.forEach { it.sent = false }
                     true
                 }
@@ -614,7 +655,7 @@ class CastSwitchPlayer private constructor(
                 else -> {
                     val ids = entries.map { it.itemId }.toIntArray()
                     val beforeId = before?.itemId ?: MediaQueueItem.INVALID_ITEM_ID
-                    client.queueReorderItems(ids, beforeId, null).resyncOnFailure()
+                    client.queueReorderItems(ids, beforeId, null).retryOnFailure(op)
                     true
                 }
             }
@@ -625,14 +666,34 @@ class CastSwitchPlayer private constructor(
             op.entry !in queue -> true
             !op.entry.sent || !op.entry.hasId -> false
             else -> {
-                client.queueJumpToItem(op.entry.itemId, op.positionMs, null).resyncOnFailure()
+                client.queueJumpToItem(op.entry.itemId, op.positionMs, null).retryOnFailure(op)
                 true
             }
         }
     }
 
-    private fun PendingResult<RemoteMediaClient.MediaChannelResult>.resyncOnFailure() =
-        setResultCallback { if (!it.status.isSuccess) resync() }
+    // A rejected change is tried again a few times before reloading the whole queue.
+    private fun PendingResult<RemoteMediaClient.MediaChannelResult>.retryOnFailure(op: Op) =
+        setResultCallback { result ->
+            if (result.status.isSuccess || !isRemote) return@setResultCallback
+            Log.w(TAG, "Cast queue change failed: ${result.status}")
+            // A newer jump has replaced this one.
+            if (op is Jump && pending?.entry !== op.entry) return@setResultCallback
+            op.attempts++
+            if (op.attempts >= MAX_ATTEMPTS) return@setResultCallback resync()
+            when (op) {
+                is Insert -> op.entries.forEach {
+                    it.sent = false
+                    it.itemId = MediaQueueItem.INVALID_ITEM_ID
+                }
+
+                is Remove -> op.entries.forEach { if (it.hasId) it.sent = true }
+                else -> Unit
+            }
+            ops.addFirst(op)
+            handler.removeCallbacks(flushRunnable)
+            handler.postDelayed(flushRunnable, RETRY_DELAY_MS)
+        }
 
     // The first entry after [entry] that the receiver already has, ignoring [except].
     private fun receiverEntryAfter(entry: Entry, except: Set<Entry>): Entry? {
@@ -714,8 +775,9 @@ class CastSwitchPlayer private constructor(
 
     override fun onLoaded(token: String, old: MediaItem, new: MediaItem) {
         handler.post {
-            val entry = queue.find { it.token == token } ?: return@post
+            val entry = queue.find { it.token == token || it.item === old } ?: return@post
             entry.item = new
+            server.update(entry.token, new)
             scope.launch { mediaChangeFlow.emit(old to new) }
             invalidateIfRemote()
         }
@@ -773,8 +835,11 @@ class CastSwitchPlayer private constructor(
         private const val MAX_ITEMS_PER_MESSAGE = 50
         private const val PRELOAD_TIME_SECONDS = 20.0
         private const val PENDING_TIMEOUT_MS = 10_000L
-        private const val OP_TIMEOUT_MS = 5_000L
-        private const val RESYNC_INTERVAL_MS = 2_000L
+        private const val OP_TIMEOUT_MS = 10_000L
+        private const val RESYNC_INTERVAL_MS = 10_000L
+        private const val RETRY_DELAY_MS = 1_000L
+        private const val MAX_ATTEMPTS = 3
+        private const val TAG = "CastSwitchPlayer"
 
         private val REMOTE_COMMANDS = intArrayOf(
             Player.COMMAND_SET_SHUFFLE_MODE,

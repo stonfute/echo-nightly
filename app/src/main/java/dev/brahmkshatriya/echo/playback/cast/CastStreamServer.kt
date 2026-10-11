@@ -97,6 +97,16 @@ class CastStreamServer(
         items.computeIfPresent(token) { _, _ -> item }
     }
 
+    /**
+     * Gives the track a new token and carries its resolved stream over, so rebuilding the
+     * receiver's queue does not hit the extension a second time.
+     */
+    fun reissue(token: String, item: MediaItem): String {
+        val new = register(items.remove(token) ?: item)
+        loads.remove(token)?.let { loads[new] = it }
+        return new
+    }
+
     fun clear() {
         items.clear()
         loads.values.forEach { it.cancel() }

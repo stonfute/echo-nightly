@@ -4,6 +4,7 @@ import android.os.Handler
 import android.os.Looper
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.C.TIME_UNSET
+import androidx.media3.common.DeviceInfo
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.Timeline
@@ -26,6 +27,7 @@ class PlayerUiListener(
             repeatMode.value = player.repeatMode
         }
         updateNavigation()
+        updateRemoteVolume()
     }
 
     private fun updateList() = viewModel.run {
@@ -37,6 +39,17 @@ class PlayerUiListener(
     private fun updateNavigation() {
         viewModel.nextEnabled.value = player.hasNextMediaItem()
         viewModel.previousEnabled.value = player.currentMediaItemIndex >= 0
+    }
+
+    // Feeds the Cast volume slider. Null hides it: we're not casting, or the volume can't be set.
+    private fun updateRemoteVolume() {
+        val deviceInfo = player.deviceInfo
+        // The local player is PLAYBACK_TYPE_LOCAL, only the Cast player is remote.
+        val canSetVolume = deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_REMOTE &&
+                deviceInfo.maxVolume > 0 &&
+                player.isCommandAvailable(Player.COMMAND_SET_DEVICE_VOLUME_WITH_FLAGS)
+        viewModel.remoteVolume.value =
+            if (canSetVolume) player.deviceVolume to deviceInfo.maxVolume else null
     }
 
     private val delay = 500L
@@ -115,4 +128,11 @@ class PlayerUiListener(
     override fun onTracksChanged(tracks: Tracks) {
         viewModel.tracksFlow.value = tracks
     }
+
+    // Starting or stopping a cast changes the device info, the Cast device reports its volume
+    // on its own, and the volume commands come and go with the session.
+    override fun onDeviceInfoChanged(deviceInfo: DeviceInfo) = updateRemoteVolume()
+    override fun onDeviceVolumeChanged(volume: Int, muted: Boolean) = updateRemoteVolume()
+    override fun onAvailableCommandsChanged(availableCommands: Player.Commands) =
+        updateRemoteVolume()
 }

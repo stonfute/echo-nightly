@@ -251,6 +251,48 @@
 
     </androidx.constraintlayout.widget.ConstraintLayout>
 
+    <!-- Cast device volume, only visible while casting. -->
+    <LinearLayout
+        android:id="@+id/castVolumeContainer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="20dp"
+        android:visibility="gone"
+        tools:visibility="visible">
+
+        <ImageView
+            android:id="@+id/castVolumeDown"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:importantForAccessibility="no"
+            android:src="@drawable/ic_volume_down"
+            app:tint="@color/button_player" />
+
+        <com.google.android.material.slider.Slider
+            android:id="@+id/castVolume"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:contentDescription="@string/cast_volume"
+            android:value="0.5"
+            app:labelBehavior="gone"
+            app:thumbColor="?attr/colorTertiary"
+            app:thumbHeight="16dp"
+            app:thumbWidth="16dp"
+            app:trackColorActive="?attr/colorTertiary"
+            app:trackHeight="4dp"
+            app:trackStopIndicatorSize="0dp" />
+
+        <ImageView
+            android:id="@+id/castVolumeUp"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:importantForAccessibility="no"
+            android:src="@drawable/ic_volume_up"
+            app:tint="@color/button_player" />
+    </LinearLayout>
+
     <TextView
         android:id="@+id/trackSubtitle"
         android:layout_width="match_parent"

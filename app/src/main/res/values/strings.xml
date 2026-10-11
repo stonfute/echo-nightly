@@ -230,6 +230,7 @@
     <string name="up_next">Up Next</string>
     <string name="info">Info</string>
     <string name="seekbar">Seekbar</string>
+    <string name="cast_volume">Cast device volume</string>
     <string name="shuffle">Shuffle</string>
     <string name="previous">Previous</string>
     <string name="play">Play</string>

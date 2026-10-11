@@ -18,6 +18,7 @@ import android.view.ViewOutlineProvider
 import android.widget.ProgressBar
 import androidx.annotation.OptIn
 import androidx.appcompat.content.res.AppCompatResources
+import androidx.core.graphics.ColorUtils
 import androidx.core.graphics.drawable.toBitmap
 import androidx.core.net.toUri
 import androidx.core.view.doOnLayout
@@ -95,6 +96,7 @@ import org.koin.androidx.viewmodel.ext.android.activityViewModel
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 class PlayerFragment : Fragment() {
     private var binding by autoClearedNullable<FragmentPlayerBinding>()
@@ -120,6 +122,7 @@ class PlayerFragment : Fragment() {
         configureColors()
         configurePlayerControls()
         configureCastButton()
+        configureCastVolume()
         configureBackgroundPlayerView()
     }
 
@@ -493,17 +496,54 @@ class PlayerFragment : Fragment() {
 
     private val likeListener = CheckBoxListener { viewModel.likeCurrent(it) }
 
+    // The Cast button stays hidden without Play services, and while no Cast device is around.
     private fun configureCastButton() {
         val button = binding!!.playerControls.trackCast
         val castContext = CastSwitchPlayer.castContext(requireContext()) ?: return
         CastButtonFactory.setUpMediaRouteButton(requireContext(), button)
         val listener = CastStateListener { button.isVisible = it != CastState.NO_DEVICES_AVAILABLE }
+        // The listener only fires on changes, so apply the current state once by hand.
         listener.onCastStateChanged(castContext.castState)
         castContext.addCastStateListener(listener)
+        // CastContext is a singleton, don't leave it holding on to a dead view.
         viewLifecycleOwner.lifecycle.addObserver(object : DefaultLifecycleObserver {
             override fun onDestroy(owner: LifecycleOwner) =
                 castContext.removeCastStateListener(listener)
         })
+    }
+
+    // Volume slider of the Cast device, only shown while casting.
+    private fun configureCastVolume() {
+        val controls = binding!!.playerControls
+        // While the finger is on the slider, updates coming back from the device would make
+        // the thumb jump around under it.
+        var isTouching = false
+        // Last step sent or received, so dragging doesn't send the same step over and over.
+        var lastSent: Int? = null
+        controls.castVolume.addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
+            override fun onStartTrackingTouch(slider: Slider) {
+                isTouching = true
+            }
+
+            override fun onStopTrackingTouch(slider: Slider) {
+                isTouching = false
+            }
+        })
+        controls.castVolume.addOnChangeListener { _, value, fromUser ->
+            val max = viewModel.remoteVolume.value?.second ?: return@addOnChangeListener
+            // The slider goes from 0 to 1, the device counts in whole steps.
+            val volume = (value * max).roundToInt()
+            if (!fromUser || volume == lastSent) return@addOnChangeListener
+            lastSent = volume
+            viewModel.setRemoteVolume(volume)
+        }
+        observe(viewModel.remoteVolume) { remote ->
+            controls.castVolumeContainer.isVisible = remote != null
+            if (remote == null || isTouching) return@observe
+            val (volume, max) = remote
+            lastSent = volume
+            controls.castVolume.value = (volume.toFloat() / max).coerceIn(0f, 1f)
+        }
     }
 
     private fun configureColors() {
@@ -561,6 +601,11 @@ class PlayerFragment : Fragment() {
             binding.playerControls.run {
                 seekBar.trackActiveTintList = ColorStateList.valueOf(colors.accent)
                 seekBar.thumbTintList = ColorStateList.valueOf(colors.accent)
+                castVolume.trackActiveTintList = ColorStateList.valueOf(colors.accent)
+                castVolume.thumbTintList = ColorStateList.valueOf(colors.accent)
+                castVolume.trackInactiveTintList = ColorStateList.valueOf(
+                    ColorUtils.setAlphaComponent(colors.onBackground, 0x40)
+                )
                 playingIndicator.setIndicatorColor(colors.accent)
                 bufferBar.setIndicatorColor(colors.accent)
                 bufferBar.trackColor = colors.onBackground
