@@ -231,6 +231,7 @@
     <string name="info">Info</string>
     <string name="seekbar">Seekbar</string>
     <string name="cast_volume">Cast device volume</string>
+    <string name="cast_volume_level">Cast device volume: %1$d%%</string>
     <string name="shuffle">Shuffle</string>
     <string name="previous">Previous</string>
     <string name="play">Play</string>

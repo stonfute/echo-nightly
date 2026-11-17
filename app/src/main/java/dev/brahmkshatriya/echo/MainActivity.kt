@@ -3,6 +3,8 @@ package dev.brahmkshatriya.echo
 import android.content.Context
 import android.graphics.Color.TRANSPARENT
 import android.os.Bundle
+import android.view.KeyEvent
+import android.widget.Toast
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
@@ -12,6 +14,7 @@ import androidx.fragment.app.add
 import androidx.fragment.app.commit
 import com.google.android.material.color.DynamicColors
 import com.google.android.material.color.DynamicColorsOptions
+import com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED
 import com.google.android.material.navigation.NavigationBarView
 import dev.brahmkshatriya.echo.databinding.ActivityMainBinding
 import dev.brahmkshatriya.echo.extensions.ExtensionLoader
@@ -25,6 +28,7 @@ import dev.brahmkshatriya.echo.ui.extensions.ExtensionsViewModel.Companion.confi
 import dev.brahmkshatriya.echo.ui.main.MainFragment
 import dev.brahmkshatriya.echo.ui.player.PlayerFragment
 import dev.brahmkshatriya.echo.ui.player.PlayerFragment.Companion.PLAYER_COLOR
+import dev.brahmkshatriya.echo.ui.player.PlayerViewModel
 import dev.brahmkshatriya.echo.utils.ContextUtils.getSettings
 import dev.brahmkshatriya.echo.utils.PermsUtils.checkAppPermissions
 import dev.brahmkshatriya.echo.utils.ui.UiUtils.isNightMode
@@ -65,6 +69,37 @@ open class MainActivity : AppCompatActivity() {
             add<PlayerFragment>(R.id.playerFragmentContainer, "player")
         }
         setupIntents(uiViewModel)
+    }
+
+    private val playerViewModel by viewModel<PlayerViewModel>()
+    private var castVolumeToast: Toast? = null
+
+    // Volume keys drive the Chromecast while we're casting. Some Android versions (12 on my
+    // phone) won't hand them to a remote session on their own, so we catch them here.
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val up = when (event.keyCode) {
+            KeyEvent.KEYCODE_VOLUME_UP -> true
+            KeyEvent.KEYCODE_VOLUME_DOWN -> false
+            else -> return super.dispatchKeyEvent(event)
+        }
+        // Not casting: the phone keeps its normal volume behaviour.
+        if (playerViewModel.remoteVolume.value == null) return super.dispatchKeyEvent(event)
+        // Holding the key sends repeated ACTION_DOWN, so it keeps stepping. Key up is
+        // swallowed too, only down changes anything.
+        if (event.action == KeyEvent.ACTION_DOWN && playerViewModel.stepRemoteVolume(up))
+            showCastVolume()
+        return true
+    }
+
+    // Quick feedback when the player is collapsed. Expanded, the slider already moves.
+    private fun showCastVolume() {
+        if (uiViewModel.playerSheetState.value == STATE_EXPANDED) return
+        val (volume, max) = playerViewModel.remoteVolume.value ?: return
+        // Replace the last toast, otherwise fast presses queue up a pile of them.
+        castVolumeToast?.cancel()
+        castVolumeToast = Toast.makeText(
+            this, getString(R.string.cast_volume_level, volume * 100 / max), Toast.LENGTH_SHORT
+        ).also { it.show() }
     }
 
     companion object {

@@ -145,8 +145,23 @@ class PlayerViewModel(
         withBrowser { it.repeatMode = repeatMode }
     }
 
+    // Flags 0, so no system volume panel is asked for. The app shows its own slider.
     fun setRemoteVolume(volume: Int) {
         withBrowser { it.setDeviceVolume(volume, 0) }
+    }
+
+    /**
+     * One volume step on the Cast device, for the hardware buttons. Media3's CastPlayer exposes
+     * 20 steps, so that's 5% a press. Returns false when we're not casting.
+     */
+    fun stepRemoteVolume(up: Boolean): Boolean {
+        val (volume, max) = remoteVolume.value ?: return false
+        val new = (volume + if (up) 1 else -1).coerceIn(0, max)
+        // Update the value now instead of waiting for the device to report it back, otherwise
+        // quick presses would all start from the same old volume.
+        remoteVolume.value = new to max
+        if (new != volume) setRemoteVolume(new)
+        return true
     }
 
     suspend fun isLikeClient(extensionId: String): Boolean = withContext(Dispatchers.IO) {
