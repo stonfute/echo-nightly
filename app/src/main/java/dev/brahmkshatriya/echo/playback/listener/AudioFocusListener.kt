@@ -6,6 +6,7 @@ import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
+import androidx.media3.common.DeviceInfo
 import androidx.media3.common.Player
 import androidx.media3.common.Player.PlaybackSuppressionReason
 
@@ -18,11 +19,17 @@ class AudioFocusListener(
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private lateinit var focusRequest: AudioFocusRequest
 
+    // True while casting. The phone's audio focus has nothing to do with the Chromecast then,
+    // and any seek we send there makes it buffer again.
+    private val isRemote
+        get() = player.deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_REMOTE
+
     private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener {
         if (it == AudioManager.AUDIOFOCUS_GAIN) {
             player.apply {
                 setAudioAttributes(audioAttributes, true)
-                seekTo(currentPosition)
+                // Only the local player needs this seek.
+                if (!isRemote) seekTo(currentPosition)
             }
             abandonRequest()
         }
@@ -67,6 +74,8 @@ class AudioFocusListener(
     }
 
     override fun onPlaybackSuppressionReasonChanged(playbackSuppressionReason: @PlaybackSuppressionReason Int) {
+        // A call or a notification on the phone shouldn't pause the Chromecast.
+        if (isRemote) return
         if (playbackSuppressionReason == Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS) {
             player.apply {
                 setAudioAttributes(audioAttributes, false)
