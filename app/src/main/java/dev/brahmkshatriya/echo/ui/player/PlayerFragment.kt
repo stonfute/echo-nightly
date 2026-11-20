@@ -43,6 +43,7 @@ import androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
 import androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_OUTLINE
+import androidx.mediarouter.media.MediaRouter
 import com.google.android.gms.cast.framework.CastButtonFactory
 import com.google.android.gms.cast.framework.CastState
 import com.google.android.gms.cast.framework.CastStateListener
@@ -61,6 +62,7 @@ import dev.brahmkshatriya.echo.playback.MediaItemUtils.isLiked
 import dev.brahmkshatriya.echo.playback.MediaItemUtils.isLoaded
 import dev.brahmkshatriya.echo.playback.MediaItemUtils.showBackground
 import dev.brahmkshatriya.echo.playback.MediaItemUtils.track
+import dev.brahmkshatriya.echo.playback.cast.CastRouteDialogFactory
 import dev.brahmkshatriya.echo.playback.cast.CastSwitchPlayer
 import dev.brahmkshatriya.echo.ui.common.FragmentUtils.openFragment
 import dev.brahmkshatriya.echo.ui.common.UiViewModel
@@ -501,12 +503,28 @@ class PlayerFragment : Fragment() {
         val button = binding!!.playerControls.trackCast
         val castContext = CastSwitchPlayer.castContext(requireContext()) ?: return
         CastButtonFactory.setUpMediaRouteButton(requireContext(), button)
+        // Lists Play services devices only, Play services clones would add a copy of each.
+        button.dialogFactory = CastRouteDialogFactory()
         val listener = CastStateListener { button.isVisible = it != CastState.NO_DEVICES_AVAILABLE }
         // The listener only fires on changes, so apply the current state once by hand.
         listener.onCastStateChanged(castContext.castState)
         castContext.addCastStateListener(listener)
-        // CastContext is a singleton, don't leave it holding on to a dead view.
+
+        // Nothing searches for Cast devices unless someone asks, so the button could stay
+        // hidden until another app ran a search. Ask for it while the app is on screen.
+        val router = MediaRouter.getInstance(requireContext())
+        val selector = castContext.mergedSelector
+        val discovery = object : MediaRouter.Callback() {}
         viewLifecycleOwner.lifecycle.addObserver(object : DefaultLifecycleObserver {
+            override fun onStart(owner: LifecycleOwner) {
+                if (selector != null) router.addCallback(
+                    selector, discovery, MediaRouter.CALLBACK_FLAG_REQUEST_DISCOVERY
+                )
+            }
+
+            override fun onStop(owner: LifecycleOwner) = router.removeCallback(discovery)
+
+            // CastContext is a singleton, don't leave it holding on to a dead view.
             override fun onDestroy(owner: LifecycleOwner) =
                 castContext.removeCastStateListener(listener)
         })

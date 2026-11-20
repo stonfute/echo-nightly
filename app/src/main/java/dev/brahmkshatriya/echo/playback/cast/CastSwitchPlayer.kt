@@ -1114,7 +1114,10 @@ class CastSwitchPlayer private constructor(
         fun castContext(context: Context): CastContext? {
             if (!isAvailable(context)) return null
             @Suppress("DEPRECATION")
-            return runCatching { CastContext.getSharedInstance(context) }.getOrNull()
+            return runCatching { CastContext.getSharedInstance(context) }
+                // Otherwise the Cast button just never shows up, with no hint as to why.
+                .onFailure { Log.w(TAG, "Cast is not available", it) }
+                .getOrNull()
         }
 
         /** Returns null when Google Play services, and so Cast, is not available. */
